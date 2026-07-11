@@ -13,10 +13,9 @@ Modular Automation Dashboard
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
-local screenSize = player:FindFirstChild("PlayerGui") and player.PlayerGui.AbsoluteSize or Vector2.new(1920, 1080)
+local screenSize = player and player:FindFirstChild("PlayerGui") and player.PlayerGui.AbsoluteSize or Vector2.new(1920, 1080)
 
 -- UI Scaling for Mobile (1/5 of screen size)
 local WINDOW_WIDTH = math.floor(screenSize.X / 5)
@@ -45,6 +44,7 @@ local state = {
 	hunt_spawn_detected = false,
 	risk_detected = false,
 	is_swapping = false,
+	original_display_name = nil,
 }
 
 -- ==========================================
@@ -114,7 +114,7 @@ local function equip_rod(rod_name)
 end
 
 local function pause_script(script_ref)
-	if script_ref and script_ref:IsA("LocalScript") or script_ref:IsA("Script") then
+	if script_ref and (script_ref:IsA("LocalScript") or script_ref:IsA("Script")) then
 		pcall(function()
 			script_ref.Disabled = true
 		end)
@@ -124,7 +124,7 @@ local function pause_script(script_ref)
 end
 
 local function resume_script(script_ref)
-	if script_ref and script_ref:IsA("LocalScript") or script_ref:IsA("Script") then
+	if script_ref and (script_ref:IsA("LocalScript") or script_ref:IsA("Script")) then
 		pcall(function()
 			script_ref.Disabled = false
 		end)
@@ -151,13 +151,23 @@ local function hide_player_name(should_hide)
 	if not player then return end
 	
 	pcall(function()
+		-- Save original DisplayName the first time
+		if state.original_display_name == nil then
+			state.original_display_name = player.DisplayName
+		end
+
 		if should_hide then
-			player.Name = "░░░░░░"
+			-- Don't attempt to change Player.Name (read-only). Use DisplayName only.
 			player.DisplayName = "░░░░░░"
-			log_event("Player name hidden")
+			log_event("Player display name hidden")
 		else
-			player.DisplayName = player.UserId .. ""
-			log_event("Player name revealed")
+			-- Restore DisplayName if we have it
+			if state.original_display_name then
+				player.DisplayName = state.original_display_name
+			else
+				player.DisplayName = tostring(player.UserId)
+			end
+			log_event("Player display name revealed")
 		end
 	end)
 end
@@ -199,8 +209,8 @@ local function monitor_hunt_and_risk_events()
 		-- Simulate event detection in workspace/GUI
 		-- (This is where you'd implement actual Hunt Spawn/Risk detection logic)
 		
-		local hunt_spawn = workspace:FindFirstChild("HuntSpawn") or CoreGui:FindFirstChild("HuntSpawn")
-		local risk_event = workspace:FindFirstChild("Risk") or CoreGui:FindFirstChild("Risk")
+		local hunt_spawn = workspace:FindFirstChild("HuntSpawn")
+		local risk_event = workspace:FindFirstChild("Risk")
 		
 		-- Hunt Spawn detected
 		if hunt_spawn and not state.hunt_spawn_detected then
@@ -249,12 +259,18 @@ end
 -- ==========================================
 
 local function create_ui()
+	-- Ensure player PlayerGui is available
+	local playerGui = player and player:FindFirstChild("PlayerGui")
+	if not playerGui then
+		error("PlayerGui not found")
+	end
+
 	-- Main Screen GUI
 	local screen_gui = Instance.new("ScreenGui")
 	screen_gui.Name = "CarolUI"
 	screen_gui.ResetOnSpawn = false
 	screen_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	screen_gui.Parent = player:FindFirstChild("PlayerGui") or CoreGui
+	screen_gui.Parent = playerGui
 	
 	-- Background Frame (Blurry Glass Effect)
 	local main_frame = Instance.new("Frame")
@@ -291,7 +307,7 @@ local function create_ui()
 	header_title.Text = "CAROL"
 	header_title.TextColor3 = COLOR_NEON_ORANGE
 	header_title.TextSize = 18
-	header_title.Font = Enum.Font.BebasNeue
+	header_title.Font = Enum.Font.SourceSans
 	header_title.Parent = header_frame
 	
 	-- Minimize Button
@@ -304,7 +320,7 @@ local function create_ui()
 	minimize_btn.Text = "-"
 	minimize_btn.TextColor3 = COLOR_WHITE
 	minimize_btn.TextSize = 16
-	minimize_btn.Font = Enum.Font.BebasNeue
+	minimize_btn.Font = Enum.Font.SourceSans
 	minimize_btn.BorderSizePixel = 0
 	minimize_btn.Parent = header_frame
 	
@@ -318,7 +334,7 @@ local function create_ui()
 	close_btn.Text = "X"
 	close_btn.TextColor3 = COLOR_WHITE
 	close_btn.TextSize = 16
-	close_btn.Font = Enum.Font.BebasNeue
+	close_btn.Font = Enum.Font.SourceSans
 	close_btn.BorderSizePixel = 0
 	close_btn.Parent = header_frame
 	
@@ -352,7 +368,7 @@ local function create_ui()
 	left_title.Text = "Auto Disturbance"
 	left_title.TextColor3 = COLOR_NEON_ORANGE
 	left_title.TextSize = 12
-	left_title.Font = Enum.Font.BebasNeue
+	left_title.Font = Enum.Font.SourceSans
 	left_title.TextXAlignment = Enum.TextXAlignment.Left
 	left_title.Parent = left_panel
 	
@@ -366,7 +382,7 @@ local function create_ui()
 	scan_rod1_btn.Text = "[Scan]"
 	scan_rod1_btn.TextColor3 = COLOR_WHITE
 	scan_rod1_btn.TextSize = 10
-	scan_rod1_btn.Font = Enum.Font.BebasNeue
+	scan_rod1_btn.Font = Enum.Font.SourceSans
 	scan_rod1_btn.BorderSizePixel = 1
 	scan_rod1_btn.BorderColor3 = COLOR_NEON_ORANGE
 	scan_rod1_btn.Parent = left_panel
@@ -381,7 +397,7 @@ local function create_ui()
 	rod1_textbox.Text = "Name of Rod_1 | ID"
 	rod1_textbox.TextColor3 = COLOR_WHITE
 	rod1_textbox.TextSize = 9
-	rod1_textbox.Font = Enum.Font.BebasNeue
+	rod1_textbox.Font = Enum.Font.SourceSans
 	rod1_textbox.TextEditable = false
 	rod1_textbox.BorderSizePixel = 1
 	rod1_textbox.BorderColor3 = COLOR_NEON_ORANGE
@@ -397,7 +413,7 @@ local function create_ui()
 	scan_rod2_btn.Text = "[Scan]"
 	scan_rod2_btn.TextColor3 = COLOR_WHITE
 	scan_rod2_btn.TextSize = 10
-	scan_rod2_btn.Font = Enum.Font.BebasNeue
+	scan_rod2_btn.Font = Enum.Font.SourceSans
 	scan_rod2_btn.BorderSizePixel = 1
 	scan_rod2_btn.BorderColor3 = COLOR_NEON_ORANGE
 	scan_rod2_btn.Parent = left_panel
@@ -412,7 +428,7 @@ local function create_ui()
 	rod2_textbox.Text = "Name of Rod_2 | ID"
 	rod2_textbox.TextColor3 = COLOR_WHITE
 	rod2_textbox.TextSize = 9
-	rod2_textbox.Font = Enum.Font.BebasNeue
+	rod2_textbox.Font = Enum.Font.SourceSans
 	rod2_textbox.TextEditable = false
 	rod2_textbox.BorderSizePixel = 1
 	rod2_textbox.BorderColor3 = COLOR_NEON_ORANGE
@@ -427,7 +443,7 @@ local function create_ui()
 	auto_swap_label.Text = "(Toggle) Active Auto Swap"
 	auto_swap_label.TextColor3 = COLOR_WHITE
 	auto_swap_label.TextSize = 9
-	auto_swap_label.Font = Enum.Font.BebasNeue
+	auto_swap_label.Font = Enum.Font.SourceSans
 	auto_swap_label.TextXAlignment = Enum.TextXAlignment.Left
 	auto_swap_label.Parent = left_panel
 	
@@ -441,7 +457,7 @@ local function create_ui()
 	auto_swap_toggle.Text = "OFF"
 	auto_swap_toggle.TextColor3 = COLOR_PITCH_BLACK
 	auto_swap_toggle.TextSize = 9
-	auto_swap_toggle.Font = Enum.Font.BebasNeue
+	auto_swap_toggle.Font = Enum.Font.SourceSans
 	auto_swap_toggle.BorderSizePixel = 1
 	auto_swap_toggle.BorderColor3 = COLOR_WHITE
 	auto_swap_toggle.Parent = left_panel
@@ -467,7 +483,7 @@ local function create_ui()
 	right_title.Text = "Script Synchronize"
 	right_title.TextColor3 = COLOR_NEON_ORANGE
 	right_title.TextSize = 12
-	right_title.Font = Enum.Font.BebasNeue
+	right_title.Font = Enum.Font.SourceSans
 	right_title.TextXAlignment = Enum.TextXAlignment.Left
 	right_title.Parent = right_panel
 	
@@ -481,7 +497,7 @@ local function create_ui()
 	script_dropdown.Text = "Running Script ▼"
 	script_dropdown.TextColor3 = COLOR_WHITE
 	script_dropdown.TextSize = 9
-	script_dropdown.Font = Enum.Font.BebasNeue
+	script_dropdown.Font = Enum.Font.SourceSans
 	script_dropdown.BorderSizePixel = 1
 	script_dropdown.BorderColor3 = COLOR_NEON_ORANGE
 	script_dropdown.Parent = right_panel
@@ -495,7 +511,7 @@ local function create_ui()
 	sync_label.Text = "(toggle) Sync to script"
 	sync_label.TextColor3 = COLOR_WHITE
 	sync_label.TextSize = 8
-	sync_label.Font = Enum.Font.BebasNeue
+	sync_label.Font = Enum.Font.SourceSans
 	sync_label.TextXAlignment = Enum.TextXAlignment.Left
 	sync_label.Parent = right_panel
 	
@@ -509,7 +525,7 @@ local function create_ui()
 	sync_toggle.Text = "OFF"
 	sync_toggle.TextColor3 = COLOR_PITCH_BLACK
 	sync_toggle.TextSize = 8
-	sync_toggle.Font = Enum.Font.BebasNeue
+	sync_toggle.Font = Enum.Font.SourceSans
 	sync_toggle.BorderSizePixel = 1
 	sync_toggle.BorderColor3 = COLOR_WHITE
 	sync_toggle.Parent = right_panel
@@ -523,7 +539,7 @@ local function create_ui()
 	hide_name_label.Text = "(toggle) hide name"
 	hide_name_label.TextColor3 = COLOR_WHITE
 	hide_name_label.TextSize = 8
-	hide_name_label.Font = Enum.Font.BebasNeue
+	hide_name_label.Font = Enum.Font.SourceSans
 	hide_name_label.TextXAlignment = Enum.TextXAlignment.Left
 	hide_name_label.Parent = right_panel
 	
@@ -537,7 +553,7 @@ local function create_ui()
 	hide_name_toggle.Text = "OFF"
 	hide_name_toggle.TextColor3 = COLOR_PITCH_BLACK
 	hide_name_toggle.TextSize = 8
-	hide_name_toggle.Font = Enum.Font.BebasNeue
+	hide_name_toggle.Font = Enum.Font.SourceSans
 	hide_name_toggle.BorderSizePixel = 1
 	hide_name_toggle.BorderColor3 = COLOR_WHITE
 	hide_name_toggle.Parent = right_panel
@@ -551,7 +567,7 @@ local function create_ui()
 	log_title.Text = "Log"
 	log_title.TextColor3 = COLOR_NEON_ORANGE
 	log_title.TextSize = 10
-	log_title.Font = Enum.Font.BebasNeue
+	log_title.Font = Enum.Font.SourceSans
 	log_title.TextXAlignment = Enum.TextXAlignment.Center
 	log_title.Parent = right_panel
 	
@@ -565,7 +581,7 @@ local function create_ui()
 	log_box.Text = ""
 	log_box.TextColor3 = COLOR_NEON_ORANGE
 	log_box.TextSize = 8
-	log_box.Font = Enum.Font.BebasNeue
+	log_box.Font = Enum.Font.SourceSans
 	log_box.TextEditable = false
 	log_box.TextWrapped = true
 	log_box.TextYAlignment = Enum.TextYAlignment.Top
@@ -588,11 +604,11 @@ local function create_ui()
 	float_btn.Text = "OPEN"
 	float_btn.TextColor3 = COLOR_WHITE
 	float_btn.TextSize = 12
-	float_btn.Font = Enum.Font.BebasNeue
+	float_btn.Font = Enum.Font.SourceSans
 	float_btn.BorderSizePixel = 2
 	float_btn.BorderColor3 = COLOR_NEON_ORANGE
 	float_btn.Visible = false
-	float_btn.Parent = screen_gui
+	float_btn.Parent = playerGui
 	
 	-- Add UICorner to floating button
 	local float_corner = Instance.new("UICorner")
@@ -725,7 +741,7 @@ local function create_ui()
 	-- ==========================================
 	
 	local cleanup_connection
-	cleanup_connection = game:GetService("RunService").Heartbeat:Connect(function()
+	cleanup_connection = RunService.Heartbeat:Connect(function()
 		if not screen_gui.Parent then
 			disconnect_all_events()
 			cleanup_connection:Disconnect()
@@ -743,8 +759,14 @@ end
 local function main()
 	log_event("Starting CAROL Co-Pilot Working Tool...")
 	
-	if not player or not player:FindFirstChild("PlayerGui") and not CoreGui then
-		log_event("ERROR: PlayerGui or CoreGui not accessible")
+	if not player then
+		log_event("ERROR: LocalPlayer not found. Make sure this is a LocalScript running on the client.")
+		return
+	end
+
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then
+		log_event("ERROR: PlayerGui not found.")
 		return
 	end
 	
