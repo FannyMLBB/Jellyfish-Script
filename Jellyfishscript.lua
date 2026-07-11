@@ -1,791 +1,459 @@
---[[
-========================================
-CAROL - CO-PILOT WORKING TOOL v1.0
-Delta Environment | Lua Execution
-Modular Automation Dashboard
-========================================
-]]
+-- =============================================================================
+-- CAROL CO-PILOT SCRIPT (FISCH) - OPTIMIZED FOR DELTA EXECUTOR
+-- =============================================================================
 
--- ==========================================
--- CORE INITIALIZATION & CONFIGURATION
--- ==========================================
-
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 
-local player = Players.LocalPlayer
-local screenSize = player and player:FindFirstChild("PlayerGui") and player.PlayerGui.AbsoluteSize or Vector2.new(1920, 1080)
+-- Target Parent GUI (Delta/Mobile Compatibility)
+local ParentGui = game:GetService("CoreGui")
+if gethui then ParentGui = gethui() end
 
--- UI Scaling for Mobile (1/5 of screen size)
-local WINDOW_WIDTH = math.floor(screenSize.X / 5)
-local WINDOW_HEIGHT = math.floor(screenSize.Y / 5)
-
--- Color Palette
-local COLOR_PITCH_BLACK = Color3.fromRGB(0, 0, 0)
-local COLOR_NEON_ORANGE = Color3.fromRGB(255, 100, 0)
-local COLOR_WHITE = Color3.fromRGB(255, 255, 255)
-local COLOR_DARK_TRANSLUCENT = Color3.fromRGB(20, 20, 20)
-
--- State Management
-local state = {
-	rod_1 = nil,
-	rod_1_id = nil,
-	rod_2 = nil,
-	rod_2_id = nil,
-	auto_swap_active = false,
-	sync_to_script_active = false,
-	hide_name_active = false,
-	selected_script = nil,
-	window_minimized = false,
-	log_buffer = {},
-	max_log_entries = 100,
-	event_connections = {},
-	hunt_spawn_detected = false,
-	risk_detected = false,
-	is_swapping = false,
-	original_display_name = nil,
+-- =============================================================================
+-- STATE CHANGER & VARIABLES
+-- =============================================================================
+local Variables = {
+    rod_1 = nil, -- Farming Rod
+    rod_2 = nil, -- Disturbance Rod
+    autoSwapEnabled = false,
+    syncEnabled = false,
+    hideNameEnabled = false,
+    selectedScript = nil,
+    isRiskActive = false,
+    originalDisplayName = LocalPlayer.DisplayName,
+    originalName = LocalPlayer.Name
 }
 
--- ==========================================
--- UTILITY FUNCTIONS
--- ==========================================
+local RunningScriptsList = {}
 
-local function log_event(message)
-	table.insert(state.log_buffer, "[LOG] " .. message)
-	if #state.log_buffer > state.max_log_entries then
-		table.remove(state.log_buffer, 1)
-	end
-	print("[CAROL] " .. message)
+-- =============================================================================
+-- LOG SYSTEM FUNCTION
+-- =============================================================================
+local function createLog(text)
+    local timestamp = os.date("%X")
+    local logText = string.format("[%s] %s", timestamp, text)
+    print(logText)
+    
+    if _G.LogContainer then
+        local logLabel = Instance.new("TextLabel")
+        logLabel.Size = UDim2.new(1, -10, 0, 20)
+        logLabel.BackgroundTransparency = 1
+        logLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        logLabel.TextXAlignment = Enum.TextXAlignment.Left
+        logLabel.Font = Enum.Font.SourceSans
+        logLabel.TextSize = 14
+        logLabel.Text = logText
+        logLabel.Parent = _G.LogContainer
+        _G.LogContainer.CanvasSize = UDim2.new(0, 0, 0, _G.LogContainer.UIListLayout.AbsoluteContentSize.Y + 25)
+    end
 end
 
-local function disconnect_all_events()
-	for _, connection in ipairs(state.event_connections) do
-		if connection and connection.Connected then
-			connection:Disconnect()
-		end
-	end
-	state.event_connections = {}
+-- =============================================================================
+-- CORE LOGIC: DETEKSI RISK / HUNT SPAWN & SWAP SYSTEM
+-- =============================================================================
+
+-- Fungsi Deteksi Hunt Spawn (Sesuaikan dengan nama object/event spesifik Fisch jika berubah)
+local function checkHuntSpawn()
+    -- Mengendus keberadaan zona berisiko atau event Hunt di Workspace
+    -- Biasanya Fisch memunculkan part khusus atau penanda di area laut
+    local huntFound = false
+    
+    -- Contoh logika universal: mencari object bernama "Hunt" atau mengandung kata "Risk" / "Meteor"
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name:find("Hunt") or obj.Name:find("Risk") or obj.Name:find("Zone") and obj:GetAttribute("IsRisk") then
+            huntFound = true
+            break
+        end
+    end
+    
+    return huntFound
 end
 
-local function get_tool_id(tool_instance)
-	if not tool_instance then return nil end
-	return tool_instance.Name
+-- Fungsi Mekanisme Swap & Freeze Paksa
+local function handleSwap(targetRodName)
+    if not targetRodName then 
+        createLog("Gagal Swap: Rod belum dikunci!")
+        return 
+    end
+
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local backpack = LocalPlayer.Backpack
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    
+    -- 1. Deteksi dan 'Freeze' script utama jika fitur Sinkronisasi aktif
+    local scriptToFreeze = nil
+    if Variables.syncEnabled and Variables.selectedScript then
+        if getrunningscripts then
+            for _, scr in pairs(getrunningscripts()) do
+                if scr.Name == Variables.selectedScript then
+                    scriptToFreeze = scr
+                    scriptToFreeze.Disabled = true
+                    createLog("Menghentikan paksa script utama: " .. scr.Name)
+                    break
+                end
+            end
+        end
+    end
+
+    -- 2. Proses Unequip rod saat ini
+    for _, item in pairs(character:GetChildren()) do
+        if item:IsA("Tool") then
+            item.Parent = backpack
+        end
+    end
+    task.wait(0.2)
+
+    -- 3. Cari dan Equip Rod baru
+    local targetRod = backpack:FindFirstChild(targetRodName)
+    if targetRod and humanoid then
+        humanoid:EquipTool(targetRod)
+        createLog("Berhasil menggunakan: " .. targetRodName)
+    else
+        createLog("Rod tidak ditemukan di Backpack: " .. targetRodName)
+    end
+    
+    task.wait(0.3)
+
+    -- 4. Unfreeze script utama kembali
+    if scriptToFreeze then
+        scriptToFreeze.Disabled = false
+        createLog("Melanjutkan kembali script utama: " .. scriptToFreeze.Name)
+    end
 end
 
-local function scan_current_tool()
-	if not player or not player.Character then
-		log_event("Character not found!")
-		return nil, nil
-	end
-	
-	local tool = player.Character:FindFirstChildOfClass("Tool")
-	if tool then
-		local tool_name = tool.Name
-		local tool_id = get_tool_id(tool)
-		return tool_name, tool_id
-	end
-	
-	log_event("No tool equipped!")
-	return nil, nil
+-- Loop Utama Co-Pilot
+task.spawn(function()
+    while task.wait(1) do
+        if Variables.autoSwapEnabled then
+            local currentRiskStatus = checkHuntSpawn()
+            
+            -- Jika ada perubahan status dari deteksi sebelumnya
+            if currentRiskStatus ~= Variables.isRiskActive then
+                Variables.isRiskActive = currentRiskStatus
+                
+                -- Jeda acak 0.5 sampai 10 detik sebelum eksekusi
+                local randomDelay = math.random(5, 100) / 10
+                createLog("Perubahan situasi terdeteksi! Menunggu jeda acak: " .. tostring(randomDelay) .. " detik.")
+                task.wait(randomDelay)
+                
+                if Variables.isRiskActive then
+                    createLog("Kondisi: Hunt Spawn Aktif. Bersiap menukar ke Rod 1.")
+                    handleSwap(Variables.rod_1)
+                else
+                    createLog("Kondisi: Hunt Spawn Selesai/Aman. Bersiap menukar ke Rod 2.")
+                    handleSwap(Variables.rod_2)
+                end
+            end
+        end
+    end
+end)
+
+-- =============================================================================
+-- REFRESH SCRIPTS FOR DROP-DOWN (Delta compatibility code)
+-- =============================================================================
+local function refreshRunningScripts()
+    table.clear(RunningScriptsList)
+    if getrunningscripts then
+        for _, scr in pairs(getrunningscripts()) do
+            if scr.Name and scr.Name ~= "Carol" and not table.find(RunningScriptsList, scr.Name) then
+                table.insert(RunningScriptsList, scr.Name)
+            end
+        end
+    else
+        -- Fallback jika executor tidak mendukung getrunningscripts
+        table.insert(RunningScriptsList, "AutoFishingScriptDemo")
+    end
 end
 
-local function equip_rod(rod_name)
-	if not rod_name or not player or not player.Character then
-		log_event("Cannot equip rod: Invalid parameters")
-		return false
-	end
-	
-	local backpack = player:FindFirstChild("Backpack")
-	if not backpack then
-		log_event("Backpack not found!")
-		return false
-	end
-	
-	local rod = backpack:FindFirstChild(rod_name)
-	if rod then
-		rod.Parent = player.Character
-		log_event("Equipped: " .. rod_name)
-		return true
-	else
-		log_event("Rod not found in backpack: " .. rod_name)
-		return false
-	end
+-- =============================================================================
+-- UI DESIGN (Blurry Dark-Orange Glass Interface - Scale 1/5 Mobile)
+-- =============================================================================
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CarolGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = ParentGui
+
+-- Main Window Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0.25, 0, 0.45, 0) -- Proporsional ~1/5 ukuran layar HP
+MainFrame.Position = UDim2.new(0.375, 0, 0.25, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.BackgroundTransparency = 0.25 -- Transparansi tinggi (simulasi Blurry Glass)
+MainFrame.BorderSizePixel = 1
+MainFrame.BorderColor3 = Color3.fromRGB(255, 100, 0) -- Neon Orange Border
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+-- Header
+local Header = Instance.new("TextLabel")
+Header.Size = UDim2.new(1, 0, 0, 30)
+Header.BackgroundTransparency = 1
+Header.Text = "Carol"
+Header.TextColor3 = Color3.fromRGB(255, 100, 0)
+Header.Font = Enum.Font.BebasNeue
+Header.TextSize = 20
+Header.Parent = MainFrame
+
+-- Window Controls (Minimize & Close)
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 20, 0, 20)
+CloseBtn.Position = UDim2.new(1, -25, 0, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextSize = 12
+CloseBtn.Parent = MainFrame
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 20, 0, 20)
+MinBtn.Position = UDim2.new(1, -50, 0, 5)
+MinBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+MinBtn.Text = "-"
+MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinBtn.Font = Enum.Font.SourceSansBold
+MinBtn.TextSize = 12
+MinBtn.Parent = MainFrame
+
+-- Container for content
+local ContentFrame = Instance.new("ScrollingFrame")
+ContentFrame.Size = UDim2.new(1, -10, 1, -40)
+ContentFrame.Position = UDim2.new(0, 5, 0, 35)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.CanvasSize = UDim2.new(0, 0, 0, 320)
+ContentFrame.ScrollBarThickness = 4
+ContentFrame.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 6)
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = ContentFrame
+
+-- Helper UI Function to update color toggles
+local function updateToggleVisual(button, status)
+    if status then
+        button.TextColor3 = Color3.fromRGB(255, 100, 0) -- Oranye Menyala
+    else
+        button.TextColor3 = Color3.fromRGB(255, 255, 255) -- Putih Nonaktif
+    end
 end
 
-local function pause_script(script_ref)
-	if script_ref and (script_ref:IsA("LocalScript") or script_ref:IsA("Script")) then
-		pcall(function()
-			script_ref.Disabled = true
-		end)
-		return true
-	end
-	return false
-end
+-- =============================================================================
+-- TAB I: AUTO DISTURBANCE
+-- =============================================================================
 
-local function resume_script(script_ref)
-	if script_ref and (script_ref:IsA("LocalScript") or script_ref:IsA("Script")) then
-		pcall(function()
-			script_ref.Disabled = false
-		end)
-		return true
-	end
-	return false
-end
+local Section1Title = Instance.new("TextLabel")
+Section1Title.Size = UDim2.new(1, 0, 0, 18)
+Section1Title.Text = "--- AUTO DISTURBANCE ---"
+Section1Title.TextColor3 = Color3.fromRGB(180, 180, 180)
+Section1Title.Font = Enum.Font.SourceSansBold
+Section1Title.TextSize = 14
+Section1Title.BackgroundTransparency = 1
+Section1Title.Parent = ContentFrame
 
-local function detect_scripts_in_workspace()
-	local scripts = {}
-	local function scan(parent)
-		for _, child in ipairs(parent:GetChildren()) do
-			if (child:IsA("LocalScript") or child:IsA("Script")) and child ~= script then
-				table.insert(scripts, child)
-			end
-			scan(child)
-		end
-	end
-	scan(workspace)
-	return scripts
-end
+-- Button Farming Rod
+local FarmingRodBtn = Instance.new("TextButton")
+FarmingRodBtn.Size = UDim2.new(1, -10, 0, 25)
+FarmingRodBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+FarmingRodBtn.Text = "Lock Farming Rod (rod_1): None"
+FarmingRodBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FarmingRodBtn.Font = Enum.Font.SourceSans
+FarmingRodBtn.TextSize = 12
+FarmingRodBtn.Parent = ContentFrame
 
-local function hide_player_name(should_hide)
-	if not player then return end
-	
-	pcall(function()
-		-- Save original DisplayName the first time
-		if state.original_display_name == nil then
-			state.original_display_name = player.DisplayName
-		end
+FarmingRodBtn.MouseButton1Click:Connect(function()
+    local char = LocalPlayer.Character
+    local equippedTool = char and char:FindFirstChildOfClass("Tool")
+    if equippedTool then
+        Variables.rod_1 = equippedTool.Name
+        FarmingRodBtn.Text = "Lock Farming Rod: " .. Variables.rod_1
+        createLog("Rod 1 dikunci ke: " .. Variables.rod_1)
+    else
+        createLog("Peringatan: Pegang/Equip Fishing Rod Anda terlebih dahulu!")
+    end
+end)
 
-		if should_hide then
-			-- Don't attempt to change Player.Name (read-only). Use DisplayName only.
-			player.DisplayName = "░░░░░░"
-			log_event("Player display name hidden")
-		else
-			-- Restore DisplayName if we have it
-			if state.original_display_name then
-				player.DisplayName = state.original_display_name
-			else
-				player.DisplayName = tostring(player.UserId)
-			end
-			log_event("Player display name revealed")
-		end
-	end)
-end
+-- Button Disturbance Rod
+local DisturbanceRodBtn = Instance.new("TextButton")
+DisturbanceRodBtn.Size = UDim2.new(1, -10, 0, 25)
+DisturbanceRodBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+DisturbanceRodBtn.Text = "Lock Disturbance Rod (rod_2): None"
+DisturbanceRodBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+DisturbanceRodBtn.Font = Enum.Font.SourceSans
+DisturbanceRodBtn.TextSize = 12
+DisturbanceRodBtn.Parent = ContentFrame
 
--- ==========================================
--- CORE AUTO-SWAP LOGIC (CONCURRENT)
--- ==========================================
+DisturbanceRodBtn.MouseButton1Click:Connect(function()
+    local char = LocalPlayer.Character
+    local equippedTool = char and char:FindFirstChildOfClass("Tool")
+    if equippedTool then
+        Variables.rod_2 = equippedTool.Name
+        DisturbanceRodBtn.Text = "Lock Disturbance: " .. Variables.rod_2
+        createLog("Rod 2 dikunci ke: " .. Variables.rod_2)
+    else
+        createLog("Peringatan: Pegang/Equip Fishing Rod Anda terlebih dahulu!")
+    end
+end)
 
-local function execute_rod_swap(target_rod, target_rod_id)
-	if state.is_swapping or not state.auto_swap_active then return end
-	
-	state.is_swapping = true
-	
-	-- Pause primary script
-	if state.selected_script and state.sync_to_script_active then
-		pause_script(state.selected_script)
-		log_event("Primary script PAUSED")
-	end
-	
-	-- Random latency before action
-	wait(math.random(5, 100) / 10)
-	
-	-- Equip rod
-	equip_rod(target_rod)
-	
-	-- Resume primary script
-	if state.selected_script and state.sync_to_script_active then
-		resume_script(state.selected_script)
-		log_event("Primary script RESUMED")
-	end
-	
-	state.is_swapping = false
-end
+-- Toggle Auto Swap Rod!
+local SwapToggleBtn = Instance.new("TextButton")
+SwapToggleBtn.Size = UDim2.new(1, -10, 0, 25)
+SwapToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+SwapToggleBtn.Text = "Auto Swap Rod!"
+SwapToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SwapToggleBtn.Font = Enum.Font.BebasNeue
+SwapToggleBtn.TextSize = 14
+SwapToggleBtn.Parent = ContentFrame
 
-local function monitor_hunt_and_risk_events()
-	local heartbeat_connection
-	
-	local function check_events()
-		-- Simulate event detection in workspace/GUI
-		-- (This is where you'd implement actual Hunt Spawn/Risk detection logic)
-		
-		local hunt_spawn = workspace:FindFirstChild("HuntSpawn")
-		local risk_event = workspace:FindFirstChild("Risk")
-		
-		-- Hunt Spawn detected
-		if hunt_spawn and not state.hunt_spawn_detected then
-			state.hunt_spawn_detected = true
-			log_event("Hunt Spawn DETECTED - Swapping to Rod_1")
-			execute_rod_swap(state.rod_1, state.rod_1_id)
-		elseif not hunt_spawn and state.hunt_spawn_detected then
-			state.hunt_spawn_detected = false
-			wait(math.random(5, 100) / 10)
-			log_event("Hunt Spawn CLEARED - Swapping to Rod_2")
-			execute_rod_swap(state.rod_2, state.rod_2_id)
-		end
-		
-		-- Risk event detected
-		if risk_event and not state.risk_detected then
-			state.risk_detected = true
-			log_event("Risk DETECTED - Swapping to Rod_1")
-			execute_rod_swap(state.rod_1, state.rod_1_id)
-		elseif not risk_event and state.risk_detected then
-			state.risk_detected = false
-			wait(math.random(5, 100) / 10)
-			log_event("Risk CLEARED - Swapping to Rod_2")
-			execute_rod_swap(state.rod_2, state.rod_2_id)
-		end
-	end
-	
-	if state.auto_swap_active then
-		if not heartbeat_connection then
-			heartbeat_connection = RunService.Heartbeat:Connect(function()
-				if state.auto_swap_active then
-					local success = pcall(check_events)
-					if not success then
-						log_event("Event monitoring error")
-					end
-				end
-			end)
-			table.insert(state.event_connections, heartbeat_connection)
-		end
-	else
-		disconnect_all_events()
-	end
-end
+SwapToggleBtn.MouseButton1Click:Connect(function()
+    Variables.autoSwapEnabled = not Variables.autoSwapEnabled
+    updateToggleVisual(SwapToggleBtn, Variables.autoSwapEnabled)
+    createLog("Auto Swap Rod diubah ke: " .. tostring(Variables.autoSwapEnabled))
+end)
 
--- ==========================================
--- UI CREATION (BLURRY GLASS THEME)
--- ==========================================
+-- =============================================================================
+-- TAB II: SCRIPT SYNCHRONIZE
+-- =============================================================================
 
-local function create_ui()
-	-- Ensure player PlayerGui is available
-	local playerGui = player and player:FindFirstChild("PlayerGui")
-	if not playerGui then
-		error("PlayerGui not found")
-	end
+local Section2Title = Instance.new("TextLabel")
+Section2Title.Size = UDim2.new(1, 0, 0, 18)
+Section2Title.Text = "--- SCRIPT SYNCHRONIZE ---"
+Section2Title.TextColor3 = Color3.fromRGB(180, 180, 180)
+Section2Title.Font = Enum.Font.SourceSansBold
+Section2Title.TextSize = 14
+Section2Title.BackgroundTransparency = 1
+Section2Title.Parent = ContentFrame
 
-	-- Main Screen GUI
-	local screen_gui = Instance.new("ScreenGui")
-	screen_gui.Name = "CarolUI"
-	screen_gui.ResetOnSpawn = false
-	screen_gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	screen_gui.Parent = playerGui
-	
-	-- Background Frame (Blurry Glass Effect)
-	local main_frame = Instance.new("Frame")
-	main_frame.Name = "MainFrame"
-	main_frame.Size = UDim2.new(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT)
-	main_frame.Position = UDim2.new(0.02, 0, 0.02, 0)
-	main_frame.BackgroundColor3 = COLOR_DARK_TRANSLUCENT
-	main_frame.BackgroundTransparency = 0.3
-	main_frame.BorderSizePixel = 2
-	main_frame.BorderColor3 = COLOR_NEON_ORANGE
-	main_frame.Parent = screen_gui
-	
-	-- Add UICorner for rounded edges
-	local ui_corner = Instance.new("UICorner")
-	ui_corner.CornerRadius = UDim.new(0, 8)
-	ui_corner.Parent = main_frame
-	
-	-- Header Bar
-	local header_frame = Instance.new("Frame")
-	header_frame.Name = "HeaderFrame"
-	header_frame.Size = UDim2.new(1, 0, 0, WINDOW_HEIGHT * 0.15)
-	header_frame.Position = UDim2.new(0, 0, 0, 0)
-	header_frame.BackgroundColor3 = COLOR_PITCH_BLACK
-	header_frame.BackgroundTransparency = 0.5
-	header_frame.BorderSizePixel = 0
-	header_frame.Parent = main_frame
-	
-	-- Header Title "Carol"
-	local header_title = Instance.new("TextLabel")
-	header_title.Name = "HeaderTitle"
-	header_title.Size = UDim2.new(0.6, 0, 1, 0)
-	header_title.Position = UDim2.new(0.2, 0, 0, 0)
-	header_title.BackgroundTransparency = 1
-	header_title.Text = "CAROL"
-	header_title.TextColor3 = COLOR_NEON_ORANGE
-	header_title.TextSize = 18
-	header_title.Font = Enum.Font.SourceSans
-	header_title.Parent = header_frame
-	
-	-- Minimize Button
-	local minimize_btn = Instance.new("TextButton")
-	minimize_btn.Name = "MinimizeBtn"
-	minimize_btn.Size = UDim2.new(0, 30, 0, 30)
-	minimize_btn.Position = UDim2.new(1, -70, 0, 5)
-	minimize_btn.BackgroundColor3 = COLOR_NEON_ORANGE
-	minimize_btn.BackgroundTransparency = 0.6
-	minimize_btn.Text = "-"
-	minimize_btn.TextColor3 = COLOR_WHITE
-	minimize_btn.TextSize = 16
-	minimize_btn.Font = Enum.Font.SourceSans
-	minimize_btn.BorderSizePixel = 0
-	minimize_btn.Parent = header_frame
-	
-	-- Close Button
-	local close_btn = Instance.new("TextButton")
-	close_btn.Name = "CloseBtn"
-	close_btn.Size = UDim2.new(0, 30, 0, 30)
-	close_btn.Position = UDim2.new(1, -35, 0, 5)
-	close_btn.BackgroundColor3 = COLOR_NEON_ORANGE
-	close_btn.BackgroundTransparency = 0.6
-	close_btn.Text = "X"
-	close_btn.TextColor3 = COLOR_WHITE
-	close_btn.TextSize = 16
-	close_btn.Font = Enum.Font.SourceSans
-	close_btn.BorderSizePixel = 0
-	close_btn.Parent = header_frame
-	
-	-- Content Area
-	local content_frame = Instance.new("Frame")
-	content_frame.Name = "ContentFrame"
-	content_frame.Size = UDim2.new(1, 0, 1, -WINDOW_HEIGHT * 0.15)
-	content_frame.Position = UDim2.new(0, 0, 0, WINDOW_HEIGHT * 0.15)
-	content_frame.BackgroundTransparency = 1
-	content_frame.BorderSizePixel = 0
-	content_frame.Parent = main_frame
-	
-	-- ==========================================
-	-- LEFT PANEL: AUTO DISTURBANCE
-	-- ==========================================
-	
-	local left_panel = Instance.new("Frame")
-	left_panel.Name = "LeftPanel"
-	left_panel.Size = UDim2.new(0.5, -2, 1, 0)
-	left_panel.Position = UDim2.new(0, 0, 0, 0)
-	left_panel.BackgroundTransparency = 1
-	left_panel.BorderSizePixel = 0
-	left_panel.Parent = content_frame
-	
-	-- Left Panel Title
-	local left_title = Instance.new("TextLabel")
-	left_title.Name = "LeftTitle"
-	left_title.Size = UDim2.new(1, 0, 0, 20)
-	left_title.Position = UDim2.new(0, 5, 0, 5)
-	left_title.BackgroundTransparency = 1
-	left_title.Text = "Auto Disturbance"
-	left_title.TextColor3 = COLOR_NEON_ORANGE
-	left_title.TextSize = 12
-	left_title.Font = Enum.Font.SourceSans
-	left_title.TextXAlignment = Enum.TextXAlignment.Left
-	left_title.Parent = left_panel
-	
-	-- Scan Rod_1 Button
-	local scan_rod1_btn = Instance.new("TextButton")
-	scan_rod1_btn.Name = "ScanRod1Btn"
-	scan_rod1_btn.Size = UDim2.new(0.3, 0, 0, 25)
-	scan_rod1_btn.Position = UDim2.new(0, 5, 0, 30)
-	scan_rod1_btn.BackgroundColor3 = COLOR_NEON_ORANGE
-	scan_rod1_btn.BackgroundTransparency = 0.7
-	scan_rod1_btn.Text = "[Scan]"
-	scan_rod1_btn.TextColor3 = COLOR_WHITE
-	scan_rod1_btn.TextSize = 10
-	scan_rod1_btn.Font = Enum.Font.SourceSans
-	scan_rod1_btn.BorderSizePixel = 1
-	scan_rod1_btn.BorderColor3 = COLOR_NEON_ORANGE
-	scan_rod1_btn.Parent = left_panel
-	
-	-- Rod_1 Display TextBox
-	local rod1_textbox = Instance.new("TextBox")
-	rod1_textbox.Name = "Rod1TextBox"
-	rod1_textbox.Size = UDim2.new(0.65, 0, 0, 25)
-	rod1_textbox.Position = UDim2.new(0.35, 0, 0, 30)
-	rod1_textbox.BackgroundColor3 = COLOR_PITCH_BLACK
-	rod1_textbox.BackgroundTransparency = 0.5
-	rod1_textbox.Text = "Name of Rod_1 | ID"
-	rod1_textbox.TextColor3 = COLOR_WHITE
-	rod1_textbox.TextSize = 9
-	rod1_textbox.Font = Enum.Font.SourceSans
-	rod1_textbox.TextEditable = false
-	rod1_textbox.BorderSizePixel = 1
-	rod1_textbox.BorderColor3 = COLOR_NEON_ORANGE
-	rod1_textbox.Parent = left_panel
-	
-	-- Scan Rod_2 Button
-	local scan_rod2_btn = Instance.new("TextButton")
-	scan_rod2_btn.Name = "ScanRod2Btn"
-	scan_rod2_btn.Size = UDim2.new(0.3, 0, 0, 25)
-	scan_rod2_btn.Position = UDim2.new(0, 5, 0, 65)
-	scan_rod2_btn.BackgroundColor3 = COLOR_NEON_ORANGE
-	scan_rod2_btn.BackgroundTransparency = 0.7
-	scan_rod2_btn.Text = "[Scan]"
-	scan_rod2_btn.TextColor3 = COLOR_WHITE
-	scan_rod2_btn.TextSize = 10
-	scan_rod2_btn.Font = Enum.Font.SourceSans
-	scan_rod2_btn.BorderSizePixel = 1
-	scan_rod2_btn.BorderColor3 = COLOR_NEON_ORANGE
-	scan_rod2_btn.Parent = left_panel
-	
-	-- Rod_2 Display TextBox
-	local rod2_textbox = Instance.new("TextBox")
-	rod2_textbox.Name = "Rod2TextBox"
-	rod2_textbox.Size = UDim2.new(0.65, 0, 0, 25)
-	rod2_textbox.Position = UDim2.new(0.35, 0, 0, 65)
-	rod2_textbox.BackgroundColor3 = COLOR_PITCH_BLACK
-	rod2_textbox.BackgroundTransparency = 0.5
-	rod2_textbox.Text = "Name of Rod_2 | ID"
-	rod2_textbox.TextColor3 = COLOR_WHITE
-	rod2_textbox.TextSize = 9
-	rod2_textbox.Font = Enum.Font.SourceSans
-	rod2_textbox.TextEditable = false
-	rod2_textbox.BorderSizePixel = 1
-	rod2_textbox.BorderColor3 = COLOR_NEON_ORANGE
-	rod2_textbox.Parent = left_panel
-	
-	-- Auto Swap Toggle Label
-	local auto_swap_label = Instance.new("TextLabel")
-	auto_swap_label.Name = "AutoSwapLabel"
-	auto_swap_label.Size = UDim2.new(0.7, 0, 0, 20)
-	auto_swap_label.Position = UDim2.new(0, 5, 0, 100)
-	auto_swap_label.BackgroundTransparency = 1
-	auto_swap_label.Text = "(Toggle) Active Auto Swap"
-	auto_swap_label.TextColor3 = COLOR_WHITE
-	auto_swap_label.TextSize = 9
-	auto_swap_label.Font = Enum.Font.SourceSans
-	auto_swap_label.TextXAlignment = Enum.TextXAlignment.Left
-	auto_swap_label.Parent = left_panel
-	
-	-- Auto Swap Toggle Button
-	local auto_swap_toggle = Instance.new("TextButton")
-	auto_swap_toggle.Name = "AutoSwapToggle"
-	auto_swap_toggle.Size = UDim2.new(0.2, 0, 0, 20)
-	auto_swap_toggle.Position = UDim2.new(0.75, 0, 0, 100)
-	auto_swap_toggle.BackgroundColor3 = COLOR_WHITE
-	auto_swap_toggle.BackgroundTransparency = 0.6
-	auto_swap_toggle.Text = "OFF"
-	auto_swap_toggle.TextColor3 = COLOR_PITCH_BLACK
-	auto_swap_toggle.TextSize = 9
-	auto_swap_toggle.Font = Enum.Font.SourceSans
-	auto_swap_toggle.BorderSizePixel = 1
-	auto_swap_toggle.BorderColor3 = COLOR_WHITE
-	auto_swap_toggle.Parent = left_panel
-	
-	-- ==========================================
-	-- RIGHT PANEL: SCRIPT SYNCHRONIZE
-	-- ==========================================
-	
-	local right_panel = Instance.new("Frame")
-	right_panel.Name = "RightPanel"
-	right_panel.Size = UDim2.new(0.5, -2, 1, 0)
-	right_panel.Position = UDim2.new(0.5, 2, 0, 0)
-	right_panel.BackgroundTransparency = 1
-	right_panel.BorderSizePixel = 0
-	right_panel.Parent = content_frame
-	
-	-- Right Panel Title
-	local right_title = Instance.new("TextLabel")
-	right_title.Name = "RightTitle"
-	right_title.Size = UDim2.new(1, 0, 0, 20)
-	right_title.Position = UDim2.new(0, 5, 0, 5)
-	right_title.BackgroundTransparency = 1
-	right_title.Text = "Script Synchronize"
-	right_title.TextColor3 = COLOR_NEON_ORANGE
-	right_title.TextSize = 12
-	right_title.Font = Enum.Font.SourceSans
-	right_title.TextXAlignment = Enum.TextXAlignment.Left
-	right_title.Parent = right_panel
-	
-	-- Script Dropdown
-	local script_dropdown = Instance.new("TextButton")
-	script_dropdown.Name = "ScriptDropdown"
-	script_dropdown.Size = UDim2.new(1, -10, 0, 25)
-	script_dropdown.Position = UDim2.new(0, 5, 0, 30)
-	script_dropdown.BackgroundColor3 = COLOR_PITCH_BLACK
-	script_dropdown.BackgroundTransparency = 0.5
-	script_dropdown.Text = "Running Script ▼"
-	script_dropdown.TextColor3 = COLOR_WHITE
-	script_dropdown.TextSize = 9
-	script_dropdown.Font = Enum.Font.SourceSans
-	script_dropdown.BorderSizePixel = 1
-	script_dropdown.BorderColor3 = COLOR_NEON_ORANGE
-	script_dropdown.Parent = right_panel
-	
-	-- Sync to Script Toggle Label
-	local sync_label = Instance.new("TextLabel")
-	sync_label.Name = "SyncLabel"
-	sync_label.Size = UDim2.new(0.7, 0, 0, 15)
-	sync_label.Position = UDim2.new(0, 5, 0, 65)
-	sync_label.BackgroundTransparency = 1
-	sync_label.Text = "(toggle) Sync to script"
-	sync_label.TextColor3 = COLOR_WHITE
-	sync_label.TextSize = 8
-	sync_label.Font = Enum.Font.SourceSans
-	sync_label.TextXAlignment = Enum.TextXAlignment.Left
-	sync_label.Parent = right_panel
-	
-	-- Sync to Script Toggle
-	local sync_toggle = Instance.new("TextButton")
-	sync_toggle.Name = "SyncToggle"
-	sync_toggle.Size = UDim2.new(0.25, 0, 0, 15)
-	sync_toggle.Position = UDim2.new(0.7, 0, 0, 65)
-	sync_toggle.BackgroundColor3 = COLOR_WHITE
-	sync_toggle.BackgroundTransparency = 0.6
-	sync_toggle.Text = "OFF"
-	sync_toggle.TextColor3 = COLOR_PITCH_BLACK
-	sync_toggle.TextSize = 8
-	sync_toggle.Font = Enum.Font.SourceSans
-	sync_toggle.BorderSizePixel = 1
-	sync_toggle.BorderColor3 = COLOR_WHITE
-	sync_toggle.Parent = right_panel
-	
-	-- Hide Name Toggle Label
-	local hide_name_label = Instance.new("TextLabel")
-	hide_name_label.Name = "HideNameLabel"
-	hide_name_label.Size = UDim2.new(0.7, 0, 0, 15)
-	hide_name_label.Position = UDim2.new(0, 5, 0, 83)
-	hide_name_label.BackgroundTransparency = 1
-	hide_name_label.Text = "(toggle) hide name"
-	hide_name_label.TextColor3 = COLOR_WHITE
-	hide_name_label.TextSize = 8
-	hide_name_label.Font = Enum.Font.SourceSans
-	hide_name_label.TextXAlignment = Enum.TextXAlignment.Left
-	hide_name_label.Parent = right_panel
-	
-	-- Hide Name Toggle
-	local hide_name_toggle = Instance.new("TextButton")
-	hide_name_toggle.Name = "HideNameToggle"
-	hide_name_toggle.Size = UDim2.new(0.25, 0, 0, 15)
-	hide_name_toggle.Position = UDim2.new(0.7, 0, 0, 83)
-	hide_name_toggle.BackgroundColor3 = COLOR_WHITE
-	hide_name_toggle.BackgroundTransparency = 0.6
-	hide_name_toggle.Text = "OFF"
-	hide_name_toggle.TextColor3 = COLOR_PITCH_BLACK
-	hide_name_toggle.TextSize = 8
-	hide_name_toggle.Font = Enum.Font.SourceSans
-	hide_name_toggle.BorderSizePixel = 1
-	hide_name_toggle.BorderColor3 = COLOR_WHITE
-	hide_name_toggle.Parent = right_panel
-	
-	-- Log Window Title
-	local log_title = Instance.new("TextLabel")
-	log_title.Name = "LogTitle"
-	log_title.Size = UDim2.new(1, 0, 0, 15)
-	log_title.Position = UDim2.new(0, 5, 0, 105)
-	log_title.BackgroundTransparency = 1
-	log_title.Text = "Log"
-	log_title.TextColor3 = COLOR_NEON_ORANGE
-	log_title.TextSize = 10
-	log_title.Font = Enum.Font.SourceSans
-	log_title.TextXAlignment = Enum.TextXAlignment.Center
-	log_title.Parent = right_panel
-	
-	-- Log Display TextBox (Scrollable)
-	local log_box = Instance.new("TextBox")
-	log_box.Name = "LogBox"
-	log_box.Size = UDim2.new(1, -10, 0, 65)
-	log_box.Position = UDim2.new(0, 5, 0, 122)
-	log_box.BackgroundColor3 = COLOR_PITCH_BLACK
-	log_box.BackgroundTransparency = 0.6
-	log_box.Text = ""
-	log_box.TextColor3 = COLOR_NEON_ORANGE
-	log_box.TextSize = 8
-	log_box.Font = Enum.Font.SourceSans
-	log_box.TextEditable = false
-	log_box.TextWrapped = true
-	log_box.TextYAlignment = Enum.TextYAlignment.Top
-	log_box.BorderSizePixel = 1
-	log_box.BorderColor3 = COLOR_NEON_ORANGE
-	log_box.MultiLine = true
-	log_box.ClearTextOnFocus = false
-	log_box.Parent = right_panel
-	
-	-- ==========================================
-	-- MINIMIZE STATE (Floating Button)
-	-- ==========================================
-	
-	local float_btn = Instance.new("TextButton")
-	float_btn.Name = "FloatOpenBtn"
-	float_btn.Size = UDim2.new(0, 60, 0, 60)
-	float_btn.Position = UDim2.new(0.02, 0, 0.02, 0)
-	float_btn.BackgroundColor3 = COLOR_NEON_ORANGE
-	float_btn.BackgroundTransparency = 0.4
-	float_btn.Text = "OPEN"
-	float_btn.TextColor3 = COLOR_WHITE
-	float_btn.TextSize = 12
-	float_btn.Font = Enum.Font.SourceSans
-	float_btn.BorderSizePixel = 2
-	float_btn.BorderColor3 = COLOR_NEON_ORANGE
-	float_btn.Visible = false
-	float_btn.Parent = playerGui
-	
-	-- Add UICorner to floating button
-	local float_corner = Instance.new("UICorner")
-	float_corner.CornerRadius = UDim.new(1, 0)
-	float_corner.Parent = float_btn
-	
-	-- ==========================================
-	-- EVENT HANDLERS
-	-- ==========================================
-	
-	scan_rod1_btn.MouseButton1Click:Connect(function()
-		local name, id = scan_current_tool()
-		if name and id then
-			state.rod_1 = name
-			state.rod_1_id = id
-			rod1_textbox.Text = name .. " | " .. id
-			log_event("Rod_1 LOCKED: " .. name)
-		end
-	end)
-	
-	scan_rod2_btn.MouseButton1Click:Connect(function()
-		local name, id = scan_current_tool()
-		if name and id then
-			state.rod_2 = name
-			state.rod_2_id = id
-			rod2_textbox.Text = name .. " | " .. id
-			log_event("Rod_2 LOCKED: " .. name)
-		end
-	end)
-	
-	auto_swap_toggle.MouseButton1Click:Connect(function()
-		state.auto_swap_active = not state.auto_swap_active
-		
-		if state.auto_swap_active then
-			auto_swap_toggle.BackgroundColor3 = COLOR_NEON_ORANGE
-			auto_swap_toggle.Text = "ON"
-			auto_swap_toggle.TextColor3 = COLOR_WHITE
-			log_event("Auto Swap ACTIVATED")
-			monitor_hunt_and_risk_events()
-		else
-			auto_swap_toggle.BackgroundColor3 = COLOR_WHITE
-			auto_swap_toggle.Text = "OFF"
-			auto_swap_toggle.TextColor3 = COLOR_PITCH_BLACK
-			log_event("Auto Swap DEACTIVATED")
-			disconnect_all_events()
-		end
-	end)
-	
-	script_dropdown.MouseButton1Click:Connect(function()
-		local scripts = detect_scripts_in_workspace()
-		if #scripts > 0 then
-			state.selected_script = scripts[1]
-			script_dropdown.Text = (scripts[1].Name or "Script_1") .. " ▼"
-			log_event("Script selected: " .. (scripts[1].Name or "Script_1"))
-		else
-			log_event("No scripts found in workspace")
-		end
-	end)
-	
-	sync_toggle.MouseButton1Click:Connect(function()
-		state.sync_to_script_active = not state.sync_to_script_active
-		
-		if state.sync_to_script_active then
-			sync_toggle.BackgroundColor3 = COLOR_NEON_ORANGE
-			sync_toggle.Text = "ON"
-			sync_toggle.TextColor3 = COLOR_WHITE
-			log_event("Script Sync ACTIVATED")
-		else
-			sync_toggle.BackgroundColor3 = COLOR_WHITE
-			sync_toggle.Text = "OFF"
-			sync_toggle.TextColor3 = COLOR_PITCH_BLACK
-			log_event("Script Sync DEACTIVATED")
-		end
-	end)
-	
-	hide_name_toggle.MouseButton1Click:Connect(function()
-		state.hide_name_active = not state.hide_name_active
-		
-		if state.hide_name_active then
-			hide_name_toggle.BackgroundColor3 = COLOR_NEON_ORANGE
-			hide_name_toggle.Text = "ON"
-			hide_name_toggle.TextColor3 = COLOR_WHITE
-			hide_player_name(true)
-		else
-			hide_name_toggle.BackgroundColor3 = COLOR_WHITE
-			hide_name_toggle.Text = "OFF"
-			hide_name_toggle.TextColor3 = COLOR_PITCH_BLACK
-			hide_player_name(false)
-		end
-	end)
-	
-	minimize_btn.MouseButton1Click:Connect(function()
-		state.window_minimized = true
-		main_frame.Visible = false
-		float_btn.Visible = true
-        log_event("Window MINIMIZED")
-	end)
-	
-	close_btn.MouseButton1Click:Connect(function()
-		disconnect_all_events()
-		log_event("CAROL shutting down...")
-		screen_gui:Destroy()
-	end)
-	
-	float_btn.MouseButton1Click:Connect(function()
-		state.window_minimized = false
-		main_frame.Visible = true
-		float_btn.Visible = false
-		log_event("Window RESTORED")
-	end)
-	
-	-- ==========================================
-	-- LOG UPDATE LOOP
-	-- ==========================================
-	
-	local log_update_connection
-	log_update_connection = RunService.Heartbeat:Connect(function()
-		local log_text = table.concat(state.log_buffer, "\n")
-		log_box.Text = log_text
-		-- Auto-scroll to bottom
-		if #state.log_buffer > 10 then
-			log_box.CursorPosition = #log_text
-		end
-	end)
-	
-	table.insert(state.event_connections, log_update_connection)
-	
-	-- ==========================================
-	-- CLEANUP ON SCRIPT DESTROY
-	-- ==========================================
-	
-	local cleanup_connection
-	cleanup_connection = RunService.Heartbeat:Connect(function()
-		if not screen_gui.Parent then
-			disconnect_all_events()
-			cleanup_connection:Disconnect()
-		end
-	end)
-	
-	log_event("CAROL initialized successfully")
-	return screen_gui
-end
+-- Bar Pilihan / Dropdown Simpel (Mendeteksi Script Running)
+local ScriptSelectBtn = Instance.new("TextButton")
+ScriptSelectBtn.Size = UDim2.new(1, -10, 0, 25)
+ScriptSelectBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ScriptSelectBtn.Text = "Target Script: Tap to Scan/Select"
+ScriptSelectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScriptSelectBtn.Font = Enum.Font.SourceSans
+ScriptSelectBtn.TextSize = 12
+ScriptSelectBtn.Parent = ContentFrame
 
--- ==========================================
--- MAIN EXECUTION
--- ==========================================
+local currentIdx = 0
+ScriptSelectBtn.MouseButton1Click:Connect(function()
+    refreshRunningScripts()
+    if #RunningScriptsList == 0 then
+        ScriptSelectBtn.Text = "Target Script: No External Script Found"
+        Variables.selectedScript = nil
+        return
+    end
+    currentIdx = currentIdx + 1
+    if currentIdx > #RunningScriptsList then currentIdx = 1 end
+    
+    Variables.selectedScript = RunningScriptsList[currentIdx]
+    ScriptSelectBtn.Text = "Target Script: " .. Variables.selectedScript
+    createLog("Target Sinkronisasi diatur ke: " .. Variables.selectedScript)
+end)
 
-local function main()
-	log_event("Starting CAROL Co-Pilot Working Tool...")
-	
-	if not player then
-		log_event("ERROR: LocalPlayer not found. Make sure this is a LocalScript running on the client.")
-		return
-	end
+-- Toggle Sync Script
+local SyncToggleBtn = Instance.new("TextButton")
+SyncToggleBtn.Size = UDim2.new(1, -10, 0, 25)
+SyncToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+SyncToggleBtn.Text = "Sync Script (Freeze Otoritas)"
+SyncToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SyncToggleBtn.Font = Enum.Font.SourceSans
+SyncToggleBtn.TextSize = 12
+SyncToggleBtn.Parent = ContentFrame
 
-	local playerGui = player:FindFirstChild("PlayerGui")
-	if not playerGui then
-		log_event("ERROR: PlayerGui not found.")
-		return
-	end
-	
-	local success, result = pcall(function()
-		return create_ui()
-    end)
-	
-	if success then
-		log_event("UI created successfully")
-	else
-		log_event("ERROR creating UI: " .. tostring(result))
-	end
-end
+SyncToggleBtn.MouseButton1Click:Connect(function()
+    Variables.syncEnabled = not Variables.syncEnabled
+    updateToggleVisual(SyncToggleBtn, Variables.syncEnabled)
+    createLog("Sinkronisasi Otoritas diubah ke: " .. tostring(Variables.syncEnabled))
+end)
 
--- Execute
-main()
+-- Toggle Hide Name
+local HideNameToggleBtn = Instance.new("TextButton")
+HideNameToggleBtn.Size = UDim2.new(1, -10, 0, 25)
+HideNameToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+HideNameToggleBtn.Text = "Hide Name Account"
+HideNameToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+HideNameToggleBtn.Font = Enum.Font.SourceSans
+HideNameToggleBtn.TextSize = 12
+HideNameToggleBtn.Parent = ContentFrame
 
---[[
-========================================
-END OF CAROL CO-PILOT TOOL v1.0
-========================================
-]]
+HideNameToggleBtn.MouseButton1Click:Connect(function()
+    Variables.hideNameEnabled = not Variables.hideNameEnabled
+    updateToggleVisual(HideNameToggleBtn, Variables.hideNameEnabled)
+    
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    
+    if Variables.hideNameEnabled then
+        if humanoid then humanoid.DisplayName = " " end
+        createLog("Nama lokal disembunyikan.")
+    else
+        if humanoid then humanoid.DisplayName = Variables.originalDisplayName end
+        createLog("Nama lokal dimunculkan kembali.")
+    end
+end)
+
+-- Log Box System
+local LogFrame = Instance.new("ScrollingFrame")
+LogFrame.Size = UDim2.new(1, -10, 0, 80)
+LogFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+LogFrame.BorderSizePixel = 1
+LogFrame.BorderColor3 = Color3.fromRGB(50, 50, 50)
+LogFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+LogFrame.Parent = ContentFrame
+
+local LogListLayout = Instance.new("UIListLayout")
+LogListLayout.Parent = LogFrame
+_G.LogContainer = LogFrame
+
+-- =============================================================================
+-- WINDOW ACTIONS & FLOATING BUTTON
+-- =============================================================================
+
+-- Open Floating Button Creation
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "CarolOpenBtn"
+OpenBtn.Size = UDim2.new(0, 50, 0, 50)
+OpenBtn.Position = UDim2.new(0.05, 0, 0.2, 0)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+OpenBtn.BorderSizePixel = 2
+OpenBtn.BorderColor3 = Color3.fromRGB(255, 120, 0)
+OpenBtn.Text = "OPEN"
+OpenBtn.TextColor3 = Color3.fromRGB(255, 120, 0)
+OpenBtn.Font = Enum.Font.SourceSansBold
+OpenBtn.TextSize = 14
+OpenBtn.Visible = false
+OpenBtn.Active = true
+OpenBtn.Draggable = true
+OpenBtn.Parent = ScreenGui
+
+local CircleCorner = Instance.new("UICorner")
+CircleCorner.CornerRadius = UDim.new(1, 0)
+CircleCorner.Parent = OpenBtn
+
+-- Minimize Logic
+MinBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    OpenBtn.Visible = true
+end)
+
+OpenBtn.MouseButton1Click:Connect(function()
+    OpenBtn.Visible = false
+    MainFrame.Visible = true
+end)
+
+-- Close Logic
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+createLog("Carol Script Co-Pilot Berhasil Diinjeksi!")
